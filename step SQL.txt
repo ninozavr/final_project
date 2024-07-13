@@ -1,0 +1,131 @@
+-- 1. Покажіть середню зарплату співробітників за кожен рік, до 2005 року.
+SELECT YEAR(salaries.to_date) AS report_year,
+  ROUND(AVG(salaries.salary), 2) AS average_salary
+FROM salaries 
+GROUP BY report_year
+HAVING report_year BETWEEN MIN(YEAR(salaries.from_date)) AND 2005
+ORDER BY report_year;
+
+/*2.Покажіть середню зарплату співробітників по кожному відділу. 
+Примітка: потрібно розрахувати по поточній зарплаті, та поточному відділу співробітників
+актуальні відділи по діючим співробітникам і середня по ним*/
+SELECT dept_emp.dept_no, departments.dept_name, ROUND(AVG(salaries.salary),2) AS average_salary
+FROM dept_emp
+JOIN departments ON dept_emp.dept_no = departments.dept_no
+JOIN salaries  ON (dept_emp.emp_no = salaries.emp_no AND CURRENT_DATE() BETWEEN salaries.from_date AND salaries.to_date)
+WHERE CURRENT_DATE() BETWEEN dept_emp.from_date AND dept_emp.to_date
+GROUP BY 1, 2
+ORDER BY dept_emp.dept_no;
+
+/*3. Покажіть середню зарплату співробітників по кожному відділу за кожний рік*/
+SELECT  departments.dept_name AS "department",
+		YEAR(salaries.to_date) AS salary_year, 
+		ROUND(AVG(salaries.salary),2) AS average_salary
+FROM salaries AS s
+INNER JOIN dept_emp AS de ON s.emp_no = de.emp_no
+INNER JOIN departments AS d ON de.dept_no = d.dept_no
+	WHERE s.from_date = de.from_date
+GROUP BY 1, 2;
+
+
+/*4. Покажіть відділи в яких зараз працює більше 15000 співробітників.*/
+SELECT departments.dept_name, COUNT(emp_no) AS employee_count
+FROM dept_emp
+JOIN departments ON dept_emp.dept_no = departments.dept_no
+JOIN (SELECT dept_emp.dept_no
+	 FROM dept_emp
+	 WHERE CURRENT_DATE() BETWEEN from_date AND to_date
+	 GROUP BY dept_no
+	 HAVING COUNT(emp_no) > 15000) AS b_departments ON departments.dept_no = b_departments.dept_no
+WHERE CURRENT_DATE() BETWEEN from_date AND to_date
+GROUP BY departments.dept_name
+ORDER BY employee_count DESC;
+
+/*5. Для менеджера який працює найдовше покажіть його номер, відділ, дату прийому на роботу, прізвище*/
+SELECT dept_manager.emp_no, departments.dept_name, employees.hire_date, employees.last_name,
+       TIMESTAMPDIFF(DAY, employees.hire_date, CURRENT_DATE()) AS days_work
+FROM dept_manager
+JOIN departments ON dept_manager.dept_no = departments.dept_no
+JOIN employees ON dept_manager.emp_no = employees.emp_no
+WHERE dept_manager.to_date > CURRENT_DATE()
+ORDER BY days_work DESC
+LIMIT 1;
+
+/*6. Покажіть топ-10 діючих співробітників компанії з найбільшою різницею між їх зарплатою і середньою зарплатою в їх відділі.*/
+WITH average_salary AS (SELECT de.dept_no, ROUND(AVG(s.salary),2) AS avg_salary
+						FROM salaries AS s
+						JOIN dept_emp AS de ON s.emp_no = de.emp_no AND CURRENT_DATE() BETWEEN de.from_date AND de.to_date
+						WHERE CURRENT_DATE() BETWEEN s.from_date AND s.to_date 
+						GROUP BY de.dept_no)
+SELECT de.emp_no, d.dept_name AS department, s.salary, avs.avg_salary AS average_salary, ABS(s.salary - avs.avg_salary) AS difference
+FROM dept_emp AS de
+JOIN departments AS d ON de.dept_no = d.dept_no
+JOIN salaries AS s ON de.emp_no = s.emp_no AND CURRENT_DATE() BETWEEN s.from_date AND s.to_date
+JOIN average_salary AS avs ON de.dept_no = avs.dept_no
+WHERE CURRENT_DATE() BETWEEN de.from_date AND de.to_date
+ORDER BY difference DESC
+LIMIT 10;
+
+/*7. Для кожного відділу покажіть другого по порядку менеджера. Необхідно вивести відділ, 
+прізвище ім’я менеджера, дату прийому на роботу менеджера і дату коли він став менеджером відділу.*/
+
+SELECT departments.dept_no, employees.first_name, employees.last_name, employees.hire_date, dept_manager.from_date AS became_manager
+FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY dept_no ORDER BY from_date) AS manager_order
+    FROM dept_manager) AS ranked_managers
+JOIN employees ON employees.emp_no=ranked_managers.emp_no
+JOIN departments ON departments.dept_no = ranked_managers.dept_no
+JOIN dept_manager ON dept_manager.emp_no = ranked_managers.emp_no
+WHERE manager_order = 2;
+
+
+
+/*4.  Покажіть для кожного року найбільший відділ цього року та його
+ середню зарплату.*/
+WITH qty_by_year AS (SELECT 
+        YEAR(s.from_date) AS period, 
+        de.dept_no,
+        ROUND(AVG(s.salary), 2) AS average_salary,
+        COUNT(de.emp_no) AS qty
+    FROM  salaries AS s
+    INNER JOIN dept_emp AS de ON s.emp_no = de.emp_no
+    WHERE s.from_date BETWEEN de.from_date AND de.to_date
+    GROUP BY YEAR(s.from_date), de.dept_no)
+SELECT 
+    q.period,
+    d.dept_name AS department, 
+    q.average_salary
+FROM qty_by_year AS q
+INNER JOIN departments AS d ON q.dept_no = d.dept_no
+WHERE q.qty = (SELECT MAX(t2.qty)
+             FROM qty_by_year AS t2
+             WHERE q.period = t2.period)
+ORDER BY q.period;
+
+
+/*5. Покажіть детальну інформацію про поточного менеджера, який 
+найдовше виконує свої обов'язки.*/
+SELECT
+    e.first_name, 
+    e.last_name, 
+    e.hire_date,
+    d.dept_name, 
+    dm.from_date, 
+    dm.to_date,
+    s.salary,
+    DATEDIFF(CURRENT_DATE(), dm.from_date) AS days_in_position
+FROM
+    dept_manager dm
+JOIN employees e ON dm.emp_no = e.emp_no
+JOIN departments d ON dm.dept_no = d.dept_no
+JOIN salaries s ON dm.emp_no = s.emp_no AND CURRENT_DATE() BETWEEN s.from_date AND s.to_date
+WHERE
+    CURRENT_DATE() BETWEEN dm.from_date AND dm.to_date
+ORDER BY
+    days_in_position DESC
+LIMIT 1;
+
+
+
+
+
+
